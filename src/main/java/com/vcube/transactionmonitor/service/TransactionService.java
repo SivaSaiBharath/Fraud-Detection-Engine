@@ -1,0 +1,109 @@
+package com.vcube.transactionmonitor.service;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.vcube.transactionmonitor.entity.Accounts;
+import com.vcube.transactionmonitor.entity.Alerts;
+import com.vcube.transactionmonitor.entity.Transaction;
+import com.vcube.transactionmonitor.exception.AccountLockedException;
+import com.vcube.transactionmonitor.exception.AccountNotFound;
+import com.vcube.transactionmonitor.repository.AccountsRepository;
+import com.vcube.transactionmonitor.repository.AlertsRepository;
+import com.vcube.transactionmonitor.repository.TransactionRepository;
+import com.vcube.transactionmonitor.rules.RuleEngine;
+import com.vcube.transactionmonitor.rules.RuleViolation;
+
+@Service
+public class TransactionService {
+
+	@Autowired
+	TransactionRepository txnRepo;
+
+	@Autowired
+	AccountsRepository accountsRepo;
+
+	@Autowired
+	AlertsRepository alertsRepo;
+
+	@Autowired
+	RuleEngine ruleEngine;
+
+	public Transaction requestTxn(Transaction txn) {
+
+		// FIND THE RELEVANT ACCOUNT FOR THE TXN OR THROW ERROR
+
+		Accounts account = accountsRepo.findById(txn.getAccountId())
+				.orElseThrow(() -> new AccountNotFound("Account not found"));
+
+		// TRANSACTION NEED TO BE SAVED AS PENDING AS DEFAULT
+
+		txn.setStatus(Transaction.TransactionStatus.PENDING);
+		txn.setTimestamp(LocalDateTime.now());
+		Transaction savedTxn = txnRepo.save(txn);
+
+		// IF ACCOUNT IS ALREADY LOCKED TXN REJECTED AND SAVED
+		if (account.getStatus() == Accounts.AccountStatus.LOCKED) {
+			savedTxn.setStatus(Transaction.TransactionStatus.REJECTED);
+
+			txnRepo.save(savedTxn);
+			throw new AccountLockedException("ACCOUNT LOCKED");
+
+		}
+
+		// PASSING TXN,ACC AS PARAM TO RULE ENGINE
+
+		List<RuleViolation> violations = ruleEngine.evaluate(savedTxn, account);
+
+		if (!violations.isEmpty()) {
+
+			boolean lockAccount = false;
+			boolean highSeverityFound = false;
+
+			for (RuleViolation v : violations) {
+				Alerts alert = new Alerts();
+				alert.setTransactionId(savedTxn.getId());
+				alert.setReason(v.getReason());
+				alert.setResolved(false);
+
+				// confirm RuleViolation.SeverityType values match Alerts.Severity (LOW,
+				// MEDIUM, HIGH)
+
+				alert.setSeverity(Alerts.Severity.valueOf(v.getSeverity().name()));
+
+				// confirm RuleViolation.ActionType values match Alerts.Action
+				// (ALERT_ONLY, LOCK_ACCOUNT)
+
+				alert.setAction(Alerts.Action.valueOf(v.getAction().name()));
+
+				if (alert.getAction() == Alerts.Action.LOCK_ACCOUNT) {
+					lockAccount = true;
+				}
+				if (v.getSeverity() == RuleViolation.SeverityType.HIGH) { // enum-to-enum, not string
+					highSeverityFound = true;
+				}
+
+				alertsRepo.save(alert);
+
+				if (highSeverityFound) {
+					account.setStatus(Accounts.AccountStatus.LOCKED);
+					accountsRepo.save(account);
+				}
+			}
+
+			savedTxn.setFlagged(true);
+
+			savedTxn.setStatus(
+					lockAccount ? Transaction.TransactionStatus.REJECTED : Transaction.TransactionStatus.FLAGGED);
+
+		} else {
+			savedTxn.setStatus(Transaction.TransactionStatus.SUCCESS);
+		}
+
+		savedTxn.setTimestamp(LocalDateTime.now());
+		return txnRepo.save(savedTxn);
+	}
+}
