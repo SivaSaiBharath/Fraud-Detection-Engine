@@ -2,6 +2,7 @@ package com.vcube.transactionmonitor.service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -17,22 +18,33 @@ import com.vcube.transactionmonitor.repository.TransactionRepository;
 import com.vcube.transactionmonitor.rules.RuleEngine;
 import com.vcube.transactionmonitor.rules.RuleViolation;
 
+import jakarta.transaction.Transactional;
+
 @Service
 public class TransactionService {
 
-	@Autowired
-	TransactionRepository txnRepo;
+	
+	private TransactionRepository txnRepo;
+	private AccountsRepository accountsRepo;
+	private AlertsRepository alertsRepo;
+	private RuleEngine ruleEngine;
 
-	@Autowired
-	AccountsRepository accountsRepo;
+	
+	
+	//CONSTRUCTOR ENGINE
+	public TransactionService(TransactionRepository txnRepo , AccountsRepository accountsRepo
+			, 	AlertsRepository alertsRepo, RuleEngine ruleEngine) {
+		
+		this.txnRepo=txnRepo;
+		this.accountsRepo=accountsRepo;
+		this.alertsRepo=alertsRepo;
+		this.ruleEngine=ruleEngine;
+		
+	}
 
-	@Autowired
-	AlertsRepository alertsRepo;
-
-	@Autowired
-	RuleEngine ruleEngine;
-
-	public Transaction requestTxn(Transaction txn) {
+	
+	
+	public Transaction createTransaction(Transaction txn) {
 
 		// FIND THE RELEVANT ACCOUNT FOR THE TXN OR THROW ERROR
 
@@ -88,10 +100,13 @@ public class TransactionService {
 
 				alertsRepo.save(alert);
 
-				if (highSeverityFound) {
-					account.setStatus(Accounts.AccountStatus.LOCKED);
-					accountsRepo.save(account);
-				}
+				
+			}
+			
+			
+			if (highSeverityFound) {
+				account.setStatus(Accounts.AccountStatus.LOCKED);
+				accountsRepo.save(account);
 			}
 
 			savedTxn.setFlagged(true);
@@ -105,5 +120,26 @@ public class TransactionService {
 
 		savedTxn.setTimestamp(LocalDateTime.now());
 		return txnRepo.save(savedTxn);
+	}
+	
+	
+	
+	
+	//Transaction by id
+	
+	public Optional<Transaction> getTransaction(Long id) {
+		return txnRepo.findById(id);
+	}
+	
+	
+	
+	public List<Transaction> getTxnByStatus(boolean status) {
+		return txnRepo.findByFlagged(status);
+	}
+
+
+
+	public List<Transaction> getTransactions() {
+		return txnRepo.findAll();
 	}
 }
