@@ -13,7 +13,7 @@ public class HighAmountRule implements FraudRule {
 	@Override
 	public RuleViolation check(Transaction txn, Accounts account) {
 		
-		if(txn.getAmount()>50000) {
+		if(txn.getAmount()>100000) {
 			RuleViolation violation = new RuleViolation();
 
 			violation.setSeverity(RuleViolation.SeverityType.MEDIUM);
